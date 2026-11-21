@@ -78,14 +78,28 @@ struct ErosionRootView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 6)
-            TabView(selection: $currentTab) {
-                ContentView().tag(0)
-                TweaksView().tag(1)
-                FMRootView().tag(2)
+            Group {
+                switch currentTab {
+                case 0: ContentView()
+                case 1: TweaksView()
+                default: FMRootView()
+                }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .animation(.snappy, value: currentTab)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            // Horizontal swipe between sections (page TabView gets eaten by the
+            // vertical scroll views inside each page).
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { v in
+                        let dx = v.translation.width, dy = v.translation.height
+                        guard abs(dx) > 70, abs(dx) > abs(dy) * 1.6 else { return }
+                        withAnimation(.snappy) {
+                            if dx < 0 { currentTab = min(2, currentTab + 1) }
+                            else { currentTab = max(0, currentTab - 1) }
+                        }
+                    }
+            )
         }
         .id(langMgr.refreshID)
         .environment(\.locale, langMgr.effectiveLocale)

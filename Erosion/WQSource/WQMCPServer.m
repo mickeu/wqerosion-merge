@@ -12,6 +12,7 @@
 #import "WQMCPServer.h"
 #import "WQAccess.h"
 #import "WQLaunchServices.h"
+#import "WQApps.h"
 #import "WQUI.h"
 #import <Security/Security.h>
 #import <sys/socket.h>
@@ -39,6 +40,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 @property (nonatomic, copy, nullable) NSString *path;
 @property (nonatomic, copy, nullable) NSString *renamedName;
 @property (nonatomic, copy, nullable) NSString *destDir;
+@property (nonatomic, copy, nullable) NSString *bundleID;
+@property (nonatomic, copy, nullable) NSString *backupName;
+@property (nonatomic, assign) BOOL safetyBackup;
 @property (nonatomic, strong, nullable) NSData *data;
 @property (nonatomic, strong, nullable) NSDictionary<NSString *, NSNumber *> *identity;
 @property (nonatomic, assign) NSTimeInterval expires;
@@ -338,12 +342,15 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
               @"required": @[@"path"]}},
         @{@"name": @"plan", @"description": @"Stage a mutation WITHOUT executing it. Show the exact returned targets, sizes and irreversible items to the user; obtain explicit confirmation before commit. Close target app manually. Expires after 120 seconds; one use.",
           @"inputSchema": @{@"type": @"object", @"properties": @{
-              @"operation": str(@"write | delete | rename | mkdir | move.", @""),
-              @"path": str(@"Target absolute path.", @""),
+              @"operation": str(@"write | delete | rename | mkdir | move | app_backup | app_clear | app_restore.", @""),
+              @"path": str(@"Target absolute path (not needed for app_* operations).", @""),
+              @"bundleID": str(@"app_*: bundle id of the target app (e.g. com.tencent.xin).", @""),
+              @"backup": str(@"app_restore: backup folder name (optional; newest when omitted).", @""),
+              @"safetyBackup": @{@"type": @"boolean", @"description": @"app_clear: make a safety backup first (default true)."},
               @"newName": str(@"rename: new base name.", @""),
               @"destDir": str(@"move: destination directory.", @""),
               @"dataBase64": str(@"write: file contents, base64.", @"")},
-              @"required": @[@"operation", @"path"]}},
+              @"required": @[@"operation"]}},
         @{@"name": @"commit", @"description": @"Execute an unchanged, unexpired plan ONLY after the user explicitly confirmed its targets and risks. The confirmation token is consumed even on failure; no auto retry.",
           @"inputSchema": @{@"type": @"object", @"properties": @{@"token": str(@"Token returned by plan.", @"")},
               @"required": @[@"token"]}},
@@ -486,8 +493,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
 - (id)toolPlan:(NSDictionary *)args {
     NSString *op = [self requiredString:args key:@"operation"];
-    NSString *path = [self requiredString:args key:@"path"];
-    if (wq_is_protected_folder(path) || wq_is_backup_storage_path(path)) {
+    BOOL isApp = [op hasPrefix:@"app_"];
+    NSString *path = isApp ? nil : [self requiredString:args key:@"path"];
+    if (!isApp && (wq_is_protected_folder(path) || wq_is_backup_storage_path(path))) {
         return [self textResult:@"Protected/invalid mutation path (WQFiles sandbox, backup stores and broad ancestors are protected)" isError:YES];
     }
     WQMCPPlan *plan = [WQMCPPlan new];
@@ -495,12 +503,12 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     plan.operation = op;
     plan.path = path;
     plan.expires = [[NSDate date] timeIntervalSince1970] + kWQMCPPlanTTL;
-    plan.identity = wq_item_identity(path);
+    if (path) plan.identity = wq_item_identity(path);
 
     NSString *irreversible = @"";
     unsigned long long size = 0;
     struct stat st;
-    BOOL exists = (wq_stat(path, &st) && S_ISREG(st.st_mode));
+    BOOL exists = (path && wq_stat(path, &st) && S_ISREG(st.st_mode));
 
     if ([op isEqualToString:@"write"]) {
         NSString *b64 = [self requiredString:args key:@"dataBase64"];
@@ -519,8 +527,17 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     } else if ([op isEqualToString:@"move"]) {
         plan.destDir = [self requiredString:args key:@"destDir"];
         irreversible = @"Moves across folders; no safety copy.";
-    } else if ([op hasPrefix:@"app_"]) {
-        return [self textResult:@"app_backup / app_clear / app_restore not wired in this build; use the App UI." isError:YES];
+    } else if ([op isEqualToString:@"app_backup"] || [op isEqualToString:@"app_clear"] || [op isEqualToString:@"app_restore"]) {
+        plan.bundleID = [self requiredString:args key:@"bundleID"];
+        plan.backupName = [args[@"backup"] isKindOfClass:NSString.class] ? args[@"backup"] : nil;
+        plan.safetyBackup = args[@"safetyBackup"] ? [args[@"safetyBackup"] boolValue] : YES;
+        if ([op isEqualToString:@"app_clear"]) {
+            irreversible = @"Deletes the app's Documents, Library and tmp (like a fresh install). Safety backup first; logins and offline data are lost.";
+        } else if ([op isEqualToString:@"app_restore"]) {
+            irreversible = @"Replaces the app's Documents and Library from a backup. Current data is safety-backed up first.";
+        } else {
+            irreversible = @"Creates a verified backup of the app's Documents and Library. No data is changed.";
+        }
     } else {
         return [self textResult:@"Unknown operation" isError:YES];
     }
@@ -548,9 +565,20 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         return [self textResult:@"Unknown, expired or already consumed confirmation token" isError:YES];
     }
     // Re-check identity for existing targets.
-    NSDictionary *now = wq_item_identity(plan.path);
-    if (plan.identity && now && ![plan.identity isEqualToDictionary:now]) {
-        return [self textResult:@"Target changed since plan; create a new plan and ask for confirmation again" isError:YES];
+    if (plan.path) {
+        NSDictionary *now = wq_item_identity(plan.path);
+        if (plan.identity && now && ![plan.identity isEqualToDictionary:now]) {
+            return [self textResult:@"Target changed since plan; create a new plan and ask for confirmation again" isError:YES];
+        }
+    }
+    if ([plan.operation hasPrefix:@"app_"]) {
+        NSString *appErr = nil;
+        NSDictionary *res = nil;
+        if ([plan.operation isEqualToString:@"app_backup"]) res = WQMCPAppBackup(plan.bundleID, &appErr);
+        else if ([plan.operation isEqualToString:@"app_clear"]) res = WQMCPAppClear(plan.bundleID, plan.safetyBackup, &appErr);
+        else res = WQMCPAppRestore(plan.bundleID, plan.backupName, &appErr);
+        if (!res) return [self textResult:(appErr ?: @"App operation failed") isError:YES];
+        return [self textResult:[self jsonString:res] isError:NO];
     }
     NSString *err = nil;
     BOOL ok = NO;

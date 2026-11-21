@@ -1947,3 +1947,100 @@ NSString *wq_recover_interrupted_restore(void)
 }
 
 @end
+
+#pragma mark - MCP app operations
+
+// Resolve the live data container for a bundle id (and its identity), granting
+// access first. Returns nil when the app isn't installed or identity is gone.
+static NSString *wq_mcp_container(NSString *bundleID, struct stat *outStat)
+{
+    if (!WQAppsSupportBundleIDValid(bundleID)) return nil;
+    for (NSString *c in wq_ls_container_paths(nil) ?: @[]) {
+        if (![wq_container_label(c) isEqualToString:bundleID]) continue;
+        struct stat st;
+        if (!(wq_stat(c, &st) && S_ISDIR(st.st_mode))) continue;
+        wq_grant(c);
+        if (outStat) *outStat = st;
+        return c;
+    }
+    return nil;
+}
+
+NSDictionary *WQMCPAppBackup(NSString *bundleID, NSString **errorText)
+{
+    struct stat st;
+    NSString *container = wq_mcp_container(bundleID, &st);
+    if (!container) { if (errorText) *errorText = @"No installed app container for this bundle id"; return nil; }
+    NSString *err = nil;
+    NSString *path = wq_make_app_backup(bundleID, container, st.st_dev, st.st_ino, @"MCP", &err);
+    if (!path) { if (errorText) *errorText = err ?: @"Backup failed"; return nil; }
+    return @{@"bundleID": bundleID, @"backup": path.lastPathComponent ?: @"", @"path": path};
+}
+
+NSDictionary *WQMCPAppClear(NSString *bundleID, BOOL safetyBackup, NSString **errorText)
+{
+    struct stat st;
+    NSString *container = wq_mcp_container(bundleID, &st);
+    if (!container) { if (errorText) *errorText = @"No installed app container for this bundle id"; return nil; }
+    NSString *err = nil, *safety = nil;
+    if (safetyBackup) {
+        safety = wq_make_app_backup(bundleID, container, st.st_dev, st.st_ino, @"Before clear", &err);
+        if (!safety) { if (errorText) *errorText = err ?: @"Safety backup failed; nothing cleared"; return nil; }
+    }
+    unsigned long long freed = 0;
+    for (NSString *part in @[@"Documents", @"Library", @"tmp"]) {
+        NSString *p = [container stringByAppendingPathComponent:part];
+        if (![NSFileManager.defaultManager fileExistsAtPath:p]) continue;
+        if (!wq_purge_and_verify(p, &freed, &err)) {
+            if (errorText) *errorText = err ?: @"Clear failed";
+            return @{@"bundleID": bundleID, @"cleared": @NO, @"freedBytes": @(freed),
+                     @"safetyBackup": safety.lastPathComponent ?: (id)NSNull.null, @"error": err ?: @""};
+        }
+    }
+    return @{@"bundleID": bundleID, @"cleared": @YES, @"freedBytes": @(freed),
+             @"safetyBackup": safety.lastPathComponent ?: (id)NSNull.null};
+}
+
+NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString **errorText)
+{
+    struct stat st;
+    NSString *container = wq_mcp_container(bundleID, &st);
+    if (!container) { if (errorText) *errorText = @"No installed app container for this bundle id"; return nil; }
+    NSString *root = wq_app_backup_root_for_bundle(bundleID);
+    if (!root.length) { if (errorText) *errorText = @"Cannot locate the app backup folder"; return nil; }
+
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *src = nil;
+    if (backupName.length) {
+        src = [root stringByAppendingPathComponent:backupName];
+    } else {
+        NSArray *names = [fm contentsOfDirectoryAtPath:root error:nil] ?: @[];
+        names = [names filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *n, id b) {
+            (void)b; return ![n hasPrefix:@"."];
+        }]];
+        names = [names sortedArrayUsingSelector:@selector(compare:)];
+        if (names.count) src = [root stringByAppendingPathComponent:names.lastObject];
+    }
+    if (!src.length || ![fm fileExistsAtPath:src]) { if (errorText) *errorText = @"No such backup"; return nil; }
+
+    NSArray *parts = nil; NSDictionary *manifest = nil; BOOL verified = NO; NSString *err = nil;
+    if (!wq_validate_backup(src, bundleID, YES, &parts, &manifest, &verified, &err)) {
+        if (errorText) *errorText = err ?: @"Backup is not safe to restore";
+        return nil;
+    }
+    NSString *safety = wq_make_app_backup(bundleID, container, st.st_dev, st.st_ino, @"Before restore", &err);
+    if (!safety) { if (errorText) *errorText = err ?: @"Safety backup failed; nothing restored"; return nil; }
+
+    for (NSString *part in @[@"Documents", @"Library"]) {
+        NSString *srcPart = [src stringByAppendingPathComponent:part];
+        NSString *dstPart = [container stringByAppendingPathComponent:part];
+        if (![fm fileExistsAtPath:srcPart]) continue;
+        if (!wq_replace_part(srcPart, dstPart, &err)) {
+            return @{@"bundleID": bundleID, @"restored": @NO, @"error": err ?: @"Restore failed",
+                     @"safetyBackup": safety.lastPathComponent ?: @""};
+        }
+    }
+    return @{@"bundleID": bundleID, @"restored": @YES,
+             @"backup": src.lastPathComponent ?: @"",
+             @"safetyBackup": safety.lastPathComponent ?: @""};
+}
