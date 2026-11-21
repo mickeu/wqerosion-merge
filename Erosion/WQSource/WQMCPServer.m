@@ -60,6 +60,8 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 @property (nonatomic, strong) dispatch_queue_t stateQueue;   // guards plans/searches
 @property (nonatomic, strong) NSMutableDictionary<NSString *, WQMCPPlan *> *plans;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary *> *searches;
+@property (nonatomic, weak) UITextView *resultView;
+@property (nonatomic, weak) UIViewController *hostVC;
 @end
 
 @implementation WQMCPServer
@@ -637,36 +639,55 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 - (UIViewController *)controlsViewController {
     UIViewController *vc = [UIViewController new];
     vc.title = @"MCP 服务";
-    UILabel *label = [UILabel new];
-    label.numberOfLines = 0;
-    label.textAlignment = NSTextAlignmentCenter;
-    label.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
-    __weak typeof(self) weakSelf = self;
-    void (^refresh)(void) = ^{
-        BOOL on = weakSelf.isRunning;
-        label.text = [NSString stringWithFormat:
-            @"%@\n\n地址\nhttp://127.0.0.1:%@/mcp\n\n令牌\n%@\n\n%@",
-            on ? @"● 运行中" : @"○ 已停止", WQMCPPort, weakSelf.secret ?: @"",
-            @"长按复制令牌。把 MCP 客户端指向上面地址，加请求头\nAuthorization: Bearer <令牌>."];
-    };
-    refresh();
-    label.translatesAutoresizingMaskIntoConstraints = NO;
-    [vc.view addSubview:label];
-    [NSLayoutConstraint activateConstraints:@[
-        [label.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:20],
-        [label.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-20],
-        [label.centerYAnchor constraintEqualToAnchor:vc.view.centerYAnchor],
-    ]];
     vc.view.backgroundColor = UIColor.systemBackgroundColor;
 
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(copySecret:)];
-    label.userInteractionEnabled = YES;
-    [label addGestureRecognizer:lp];
+    UITextView *tv = [UITextView new];
+    tv.editable = NO;
+    tv.selectable = YES;
+    tv.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
+    tv.translatesAutoresizingMaskIntoConstraints = NO;
+    tv.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    tv.layer.cornerRadius = 12;
+    tv.textContainerInset = UIEdgeInsetsMake(12, 12, 12, 12);
+    [vc.view addSubview:tv];
+    self.resultView = tv;
+    self.hostVC = vc;
 
-    vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-        initWithTitle:(self.isRunning ? @"停止" : @"启动")
-                style:wq_primary_button_style()
-               target:self action:@selector(toggleFromControls)];
+    UIButton *copy = [UIButton buttonWithType:UIButtonTypeSystem];
+    [copy setTitle:@"复制令牌" forState:UIControlStateNormal];
+    [copy addTarget:self action:@selector(copySecretButton:) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *test = [UIButton buttonWithType:UIButtonTypeSystem];
+    [test setTitle:@"自检" forState:UIControlStateNormal];
+    [test addTarget:self action:@selector(runSelfTest:) forControlEvents:UIControlEventTouchUpInside];
+    for (UIButton *b in @[copy, test]) {
+        b.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        b.backgroundColor = UIColor.tertiarySystemFillColor;
+        b.layer.cornerRadius = 12;
+    }
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[copy, test]];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.distribution = UIStackViewDistributionFillEqually;
+    row.spacing = 12;
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    [vc.view addSubview:row];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [tv.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:12],
+        [tv.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:16],
+        [tv.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-16],
+        [row.topAnchor constraintEqualToAnchor:tv.bottomAnchor constant:12],
+        [row.leadingAnchor constraintEqualToAnchor:tv.leadingAnchor],
+        [row.trailingAnchor constraintEqualToAnchor:tv.trailingAnchor],
+        [row.heightAnchor constraintEqualToConstant:44],
+    ]];
+
+    __weak typeof(self) weakSelf = self;
+    void (^refresh)(void) = ^{
+        tv.text = [NSString stringWithFormat:
+            @"%@\n\n地址\nhttp://127.0.0.1:%@/mcp\n\n令牌\n%@\n\n把 MCP 客户端指向上面地址，加请求头\nAuthorization: Bearer <令牌>\n\n点「自检」会在进程内把 5 个工具各跑一遍。",
+            weakSelf.isRunning ? @"● 运行中" : @"○ 已停止", WQMCPPort, weakSelf.secret ?: @""];
+    };
+    refresh();
     [[NSNotificationCenter defaultCenter] addObserverForName:WQMCPServerChangedNotification object:self
                                                       queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *n) {
         refresh();
@@ -675,7 +696,17 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
                     style:wq_primary_button_style()
                    target:weakSelf action:@selector(toggleFromControls)];
     }];
+    vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:(self.isRunning ? @"停止" : @"启动")
+                style:wq_primary_button_style()
+               target:self action:@selector(toggleFromControls)];
     return vc;
+}
+
+- (void)copySecretButton:(__unused UIButton *)sender {
+    UIPasteboard.generalPasteboard.string = self.secret ?: @"";
+    UIImpactFeedbackGenerator *fb = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [fb impactOccurred];
 }
 
 - (void)toggleFromControls {
