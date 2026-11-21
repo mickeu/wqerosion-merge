@@ -57,6 +57,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 }
 @property (atomic, assign, readwrite, getter=isRunning) BOOL running;
 @property (nonatomic, assign) int listenFD;
+@property (nonatomic, assign) NSUInteger generation;
+- (void)acceptLoop:(NSUInteger)gen;
+- (void)handleSocket:(int)fd;
 @property (nonatomic, strong) dispatch_queue_t stateQueue;   // guards plans/searches
 @property (nonatomic, strong) NSMutableDictionary<NSString *, WQMCPPlan *> *plans;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary *> *searches;
@@ -148,7 +151,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         self.running = YES;
         wq_log(@"[mcp] Listening on 127.0.0.1:%@ (iOS may suspend in background)", WQMCPPort);
         (void)self.secret; // ensure token exists
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self acceptLoop]; });
+        self.generation += 1;
+        NSUInteger gen = self.generation;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self acceptLoop:gen]; });
     }
     [[NSNotificationCenter defaultCenter] postNotificationName:WQMCPServerChangedNotification object:self];
 }
@@ -163,8 +168,8 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     [[NSNotificationCenter defaultCenter] postNotificationName:WQMCPServerChangedNotification object:self];
 }
 
-- (void)acceptLoop {
-    while (self.running) {
+- (void)acceptLoop:(NSUInteger)gen {
+    while (self.running && gen == self.generation) {
         int cfd = accept(self.listenFD, NULL, NULL);
         if (cfd < 0) {
             if (!self.running) break;
@@ -196,12 +201,23 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
         NSString *head = [[NSString alloc] initWithData:[buffer subdataWithRange:NSMakeRange(0, headerEnd)]
                                                encoding:NSUTF8StringEncoding];
+        NSString *requestLine = [head componentsSeparatedByString:@"\r\n"].firstObject ?: @"";
+        if (![requestLine hasPrefix:@"POST "]) {
+            [self reply:fd code:405 object:@{@"error": @"method not allowed", @"message": @"POST /mcp only"}];
+            close(fd);
+            return;
+        }
         for (NSString *line in [head componentsSeparatedByString:@"\r\n"]) {
             NSString *lower = line.lowercaseString;
             if ([lower hasPrefix:@"content-length:"]) {
                 contentLength = [[line substringFromIndex:@"content-length:".length]
                                  stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].integerValue;
             }
+        }
+        if (contentLength > 24 * 1024 * 1024) {
+            [self reply:fd code:413 object:@{@"error": @"payload too large"}];
+            close(fd);
+            return;
         }
         // Read body.
         NSMutableData *body = [NSMutableData dataWithData:[buffer subdataWithRange:NSMakeRange(headerEnd, buffer.length - headerEnd)]];
@@ -534,6 +550,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         NSString *b64 = [self requiredString:args key:@"dataBase64"];
         NSData *data = [[NSData alloc] initWithBase64EncodedString:b64 options:0];
         if (!data) return [self textResult:@"data required" isError:YES];
+        if (data.length > 16 * 1024 * 1024) return [self textResult:@"write too large (max 16 MiB)" isError:YES];
         plan.data = data; size = data.length;
         irreversible = exists ? @"Overwrites the current file; a backup is kept in Backups." : @"Creates a new file.";
     } else if ([op isEqualToString:@"delete"]) {
@@ -630,10 +647,18 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
 - (id)toolBackups:(NSDictionary *)args {
     NSString *root = wq_app_backup_root();
+    if (!root) return [self textResult:@"Backup root is unavailable" isError:YES];
     NSMutableArray *units = [NSMutableArray array];
     NSFileManager *fm = NSFileManager.defaultManager;
+    // Honour the documented filters: a bundle id, or a container path whose
+    // identifier resolves to one.
+    NSString *only = [args[@"bundleID"] isKindOfClass:NSString.class] ? args[@"bundleID"] : nil;
+    if (!only.length && [args[@"container"] isKindOfClass:NSString.class]) {
+        only = wq_container_label(args[@"container"]);
+    }
     NSArray<NSString *> *apps = [fm contentsOfDirectoryAtPath:root error:NULL] ?: @[];
     for (NSString *appDir in apps) {
+        if (only.length && ![appDir isEqualToString:only]) continue;
         NSString *full = [root stringByAppendingPathComponent:appDir];
         NSArray<NSString *> *parts = [fm contentsOfDirectoryAtPath:full error:NULL] ?: @[];
         [units addObject:@{@"app": appDir, @"backups": parts}];
