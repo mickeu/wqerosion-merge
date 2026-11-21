@@ -555,7 +555,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     NSString *err = nil;
     BOOL ok = NO;
     if ([plan.operation isEqualToString:@"write"]) {
-        ok = wq_write(plan.path, plan.data ?: [NSData data], &err);
+        // New file -> create (O_CREAT); existing file -> overwrite in place.
+        if (plan.identity) ok = wq_write(plan.path, plan.data ?: [NSData data], &err);
+        else ok = wq_create_file(plan.path, plan.data ?: [NSData data], &err);
     } else if ([plan.operation isEqualToString:@"delete"]) {
         ok = wq_delete(plan.path, &err);
     } else if ([plan.operation isEqualToString:@"rename"]) {
