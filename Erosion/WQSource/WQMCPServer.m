@@ -714,7 +714,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         NSString *p1 = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selftest_%@_a.txt", tag]];
         NSString *p2 = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selftest_%@_b.txt", tag]];
         NSString *sub = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selftest_%@", NSUUID.UUID.UUIDString]];
-        NSString *p3 = [sub stringByAppendingPathComponent:@"selftest_b.txt"];
+        NSString *p3 = [sub stringByAppendingPathComponent:p2.lastPathComponent];   // rename keeps the unique leaf
         NSData *payload = [@"hello" dataUsingEncoding:NSUTF8StringEncoding];
         @try {
             ok = wq_create_file(p1, payload, &err);
