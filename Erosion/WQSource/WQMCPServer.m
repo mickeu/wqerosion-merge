@@ -388,6 +388,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     NSString *cursor = [args[@"cursor"] isKindOfClass:NSString.class] ? args[@"cursor"] : nil;
 
     __block NSMutableDictionary *state = nil;
+    __block NSDictionary *outPage = nil;
     dispatch_sync(self.stateQueue, ^{
         if (cursor) {
             state = self.searches[cursor];
@@ -441,22 +442,20 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             }
         }
         state[@"nodes"] = @(nodes);
+        // Snapshot this page and schedule the next one atomically, on the queue.
+        NSArray *page = [matches copy];
+        NSString *nextCursor = nil;
+        if (pending.count > 0) {
+            nextCursor = [self newToken];
+            state[@"expires"] = @([[NSDate date] timeIntervalSince1970] + 120.0);
+            [matches removeAllObjects];
+            self.searches[nextCursor] = state;
+        }
+        outPage = @{@"results": page, @"cursor": nextCursor ?: NSNull.null, @"nodesScanned": @(nodes)};
     });
 
-    if (!state) return [self textResult:@"Unknown, consumed or expired search cursor; restart search" isError:YES];
-
-    NSString *nextCursor = nil;
-    if ([(NSArray *)state[@"pending"] count] > 0) {
-        nextCursor = [self newToken];
-        dispatch_async(self.stateQueue, ^{
-            state[@"expires"] = @([[NSDate date] timeIntervalSince1970] + 120.0);
-            self.searches[nextCursor] = state;
-            [state[@"matches"] removeAllObjects];
-        });
-    }
-    NSDictionary *out = @{@"results": state[@"matches"], @"cursor": nextCursor ?: NSNull.null,
-                          @"nodesScanned": state[@"nodes"]};
-    return [self textResult:[self jsonString:out] isError:NO];
+    if (!outPage) return [self textResult:@"Unknown, consumed or expired search cursor; restart search" isError:YES];
+    return [self textResult:[self jsonString:outPage] isError:NO];
 }
 
 #pragma mark read
