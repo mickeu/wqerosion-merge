@@ -700,6 +700,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         initWithTitle:(self.isRunning ? @"停止" : @"启动")
                 style:wq_primary_button_style()
                target:self action:@selector(toggleFromControls)];
+    // Run once automatically so the page shows the result without a tap.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self runSelfTest:test]; });
     return vc;
 }
 
@@ -713,7 +716,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 {
     sender.enabled = NO;
     [sender setTitle:@"测试中…" forState:UIControlStateNormal];
-    dispatch_async(wq_io(), ^{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableString *r = [NSMutableString string];
         NSString *err = nil; BOOL ok = NO;
         NSString *dir = [self.tokenPath stringByDeletingLastPathComponent];
