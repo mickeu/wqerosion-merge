@@ -64,6 +64,12 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 @property (nonatomic, weak) UIViewController *hostVC;
 @end
 
+@interface WQMCPControlsViewController : UIViewController
+@property (nonatomic, weak) WQMCPServer *server;
+@property (nonatomic, strong) UITextView *tv;
+@property (nonatomic, strong) UIButton *testButton;
+@end
+
 @implementation WQMCPServer
 
 + (instancetype)shared {
@@ -655,87 +661,20 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 #pragma mark UI
 
 - (UIViewController *)controlsViewController {
-    UIViewController *vc = [UIViewController new];
-    vc.title = @"MCP 服务";
-    vc.view.backgroundColor = UIColor.systemBackgroundColor;
-
-    UITextView *tv = [UITextView new];
-    tv.editable = NO;
-    tv.selectable = YES;
-    tv.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
-    tv.translatesAutoresizingMaskIntoConstraints = NO;
-    tv.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    tv.layer.cornerRadius = 12;
-    tv.textContainerInset = UIEdgeInsetsMake(12, 12, 12, 12);
-    [vc.view addSubview:tv];
-    self.resultView = tv;
-    self.hostVC = vc;
-
-    UIButton *copy = [UIButton buttonWithType:UIButtonTypeSystem];
-    [copy setTitle:@"复制令牌" forState:UIControlStateNormal];
-    [copy addTarget:self action:@selector(copySecretButton:) forControlEvents:UIControlEventTouchUpInside];
-    UIButton *test = [UIButton buttonWithType:UIButtonTypeSystem];
-    [test setTitle:@"自检" forState:UIControlStateNormal];
-    [test addTarget:self action:@selector(runSelfTest:) forControlEvents:UIControlEventTouchUpInside];
-    for (UIButton *b in @[copy, test]) {
-        b.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-        b.backgroundColor = UIColor.tertiarySystemFillColor;
-        b.layer.cornerRadius = 12;
-    }
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[copy, test]];
-    row.axis = UILayoutConstraintAxisHorizontal;
-    row.distribution = UIStackViewDistributionFillEqually;
-    row.spacing = 12;
-    row.translatesAutoresizingMaskIntoConstraints = NO;
-    [vc.view addSubview:row];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [tv.topAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.topAnchor constant:12],
-        [tv.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor constant:16],
-        [tv.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor constant:-16],
-        [row.topAnchor constraintEqualToAnchor:tv.bottomAnchor constant:12],
-        [row.leadingAnchor constraintEqualToAnchor:tv.leadingAnchor],
-        [row.trailingAnchor constraintEqualToAnchor:tv.trailingAnchor],
-        [row.heightAnchor constraintEqualToConstant:44],
-        [row.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor constant:-12],
-    ]];
-
-    __weak typeof(self) weakSelf = self;
-    void (^refresh)(void) = ^{
-        tv.text = [NSString stringWithFormat:
-            @"%@\n\n地址\nhttp://127.0.0.1:%@/mcp\n\n令牌\n%@\n\n把 MCP 客户端指向上面地址，加请求头\nAuthorization: Bearer <令牌>\n\n点「自检」会在进程内把 5 个工具各跑一遍。",
-            weakSelf.isRunning ? @"● 运行中" : @"○ 已停止", WQMCPPort, weakSelf.secret ?: @""];
-    };
-    refresh();
-    __weak UIViewController *weakVC = vc;
-    [[NSNotificationCenter defaultCenter] addObserverForName:WQMCPServerChangedNotification object:self
-                                                      queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *n) {
-        refresh();
-        weakVC.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-            initWithTitle:(weakSelf.isRunning ? @"停止" : @"启动")
-                    style:wq_primary_button_style()
-                   target:weakSelf action:@selector(toggleFromControls)];
-    }];
-    vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-        initWithTitle:(self.isRunning ? @"停止" : @"启动")
-                style:wq_primary_button_style()
-               target:self action:@selector(toggleFromControls)];
-    // Run once automatically so the page shows the result without a tap.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self runSelfTest:test]; });
+    WQMCPControlsViewController *vc = [WQMCPControlsViewController new];
+    vc.server = self;
     return vc;
 }
 
-- (void)copySecretButton:(__unused UIButton *)sender {
-    UIPasteboard.generalPasteboard.string = self.secret ?: @"";
-    UIImpactFeedbackGenerator *fb = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-    [fb impactOccurred];
+- (void)toggleFromControls {
+    if (self.isRunning) [self stop]; else [self start];
 }
 
-- (void)runSelfTest:(UIButton *)sender
+#pragma mark Self test
+
+// Runs every tool path in-process and hands back a PASS/FAIL report on main.
+- (void)runSelfTestWithCompletion:(void (^)(NSString *report))completion
 {
-    sender.enabled = NO;
-    [sender setTitle:@"测试中…" forState:UIControlStateNormal];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableString *r = [NSMutableString string];
         NSString *err = nil; BOOL ok = NO;
@@ -760,7 +699,6 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             [r appendFormat:@"read2  %@  %lu bytes %@\n", d2.length ? @"PASS" : @"FAIL", (unsigned long)d2.length, err ?: @""]; err = nil;
             ok = wq_delete(p3, &err);
             [r appendFormat:@"delete %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
-            // tidy: remove the temp dir (tree delete, then dir itself)
             if (wq_list(sub, NULL)) wq_delete_tree(sub, nil, nil, NULL, NULL, &err);
             err = nil;
 
@@ -781,29 +719,113 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             [r appendFormat:@"\nEXCEPTION %@: %@\n", e.name, e.reason ?: @""];
         }
         [r appendFormat:@"\n服务 %@  ·  http://127.0.0.1:%@/mcp", self.isRunning ? @"运行中" : @"已停止", WQMCPPort];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            sender.enabled = YES;
-            [sender setTitle:@"自检" forState:UIControlStateNormal];
-            UITextView *tv = self.resultView;
-            if (tv) tv.text = r;
-            else {
-                UIAlertController *a = [UIAlertController alertControllerWithTitle:@"MCP 自检" message:r preferredStyle:UIAlertControllerStyleAlert];
-                [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
-                [self.hostVC presentViewController:a animated:YES completion:nil];
-            }
-        });
+        dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(r); });
     });
 }
 
-- (void)toggleFromControls {
-    if (self.isRunning) [self stop]; else [self start];
+@end
+
+#pragma mark - Controls screen
+
+@implementation WQMCPControlsViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.title = @"MCP 服务";
+
+    UITextView *tv = [UITextView new];
+    tv.editable = NO;
+    tv.selectable = YES;
+    tv.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
+    tv.translatesAutoresizingMaskIntoConstraints = NO;
+    tv.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    tv.layer.cornerRadius = 12;
+    tv.textContainerInset = UIEdgeInsetsMake(12, 12, 12, 12);
+    [self.view addSubview:tv];
+    self.tv = tv;
+
+    UIButton *copy = [UIButton buttonWithType:UIButtonTypeSystem];
+    [copy setTitle:@"复制令牌" forState:UIControlStateNormal];
+    [copy addTarget:self action:@selector(copyToken) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *test = [UIButton buttonWithType:UIButtonTypeSystem];
+    [test setTitle:@"自检" forState:UIControlStateNormal];
+    [test addTarget:self action:@selector(runTest) forControlEvents:UIControlEventTouchUpInside];
+    self.testButton = test;
+    for (UIButton *b in @[copy, test]) {
+        b.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        b.backgroundColor = UIColor.tertiarySystemFillColor;
+        b.layer.cornerRadius = 12;
+    }
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[copy, test]];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.distribution = UIStackViewDistributionFillEqually;
+    row.spacing = 12;
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:row];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [tv.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],
+        [tv.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [tv.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [row.topAnchor constraintEqualToAnchor:tv.bottomAnchor constant:12],
+        [row.leadingAnchor constraintEqualToAnchor:tv.leadingAnchor],
+        [row.trailingAnchor constraintEqualToAnchor:tv.trailingAnchor],
+        [row.heightAnchor constraintEqualToConstant:44],
+        [row.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12],
+    ]];
+
+    // Run the self test once the page is on screen.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self runTest]; });
 }
 
-- (void)copySecret:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    UIPasteboard.generalPasteboard.string = self.secret ?: @"";
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh)
+                                                 name:WQMCPServerChangedNotification object:nil];
+    [self refresh];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:WQMCPServerChangedNotification object:nil];
+}
+
+- (void)refresh
+{
+    WQMCPServer *s = self.server;
+    self.tv.text = [NSString stringWithFormat:
+        @"%@\n\n地址\nhttp://127.0.0.1:%@/mcp\n\n令牌\n%@\n\n点「自检」会在进程内把各工具跑一遍。",
+        s.isRunning ? @"● 运行中" : @"○ 已停止", WQMCPPort, s.secret ?: @""];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:(s.isRunning ? @"停止" : @"启动")
+                style:wq_primary_button_style()
+               target:self action:@selector(toggle)];
+}
+
+- (void)toggle { [self.server toggleFromControls]; }
+
+- (void)copyToken
+{
+    UIPasteboard.generalPasteboard.string = self.server.secret ?: @"";
     UIImpactFeedbackGenerator *fb = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [fb impactOccurred];
+}
+
+- (void)runTest
+{
+    self.testButton.enabled = NO;
+    [self.testButton setTitle:@"测试中…" forState:UIControlStateNormal];
+    __weak typeof(self) weakSelf = self;
+    [self.server runSelfTestWithCompletion:^(NSString *report) {
+        weakSelf.testButton.enabled = YES;
+        [weakSelf.testButton setTitle:@"自检" forState:UIControlStateNormal];
+        weakSelf.tv.text = report;
+    }];
 }
 
 @end

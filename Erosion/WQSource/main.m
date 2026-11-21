@@ -7355,8 +7355,13 @@ static UIViewController *wq_make_root_view_controller(void)
     if (!wq_ios_supported()) return [WQUnsupportedViewController new];
     UIViewController *base = wq_prism_enabled() ? [WQPrismTabController new]
         : [[WQNavigationController alloc] initWithRootViewController:[WQRootViewController new]];
-    // Erosion (embedded SwiftUI) as its own tab.
+    // Erosion (embedded SwiftUI) as its own tab. If the Swift side fails to
+    // build its root, keep WQ Files usable instead of inserting nil.
     UIViewController *erosion = WQErosionMakeRootViewController();
+    if (!erosion) {
+        wq_log(@"[mcp] Erosion root view controller is nil; showing WQ Files only");
+        return base;
+    }
     erosion.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Erosion"
                                                        image:[UIImage systemImageNamed:@"wrench.and.screwdriver"]
                                                          tag:99];
