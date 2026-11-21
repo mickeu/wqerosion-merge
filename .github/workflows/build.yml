@@ -12,11 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
+      - name: Select Xcode (newest)
         run: |
           ls /Applications | grep -i '^Xcode' || true
-          XC=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -i 'Xcode_26' | head -1)
-          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          XC=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          echo "selected: $XC"
+          sudo xcode-select -s "$XC"
           xcodebuild -version
 
       - name: Schemes
