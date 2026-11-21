@@ -2031,6 +2031,18 @@ NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString
     NSString *safety = wq_make_app_backup(bundleID, container, st.st_dev, st.st_ino, @"Before restore", &err);
     if (!safety) { if (errorText) *errorText = err ?: @"Safety backup failed; nothing restored"; return nil; }
 
+    // Danger: the whole replacement happens under a restore journal, exactly
+    // like the Apps screen, so a kill mid-restore rolls back at next launch.
+    WQAppItem *item = [WQAppItem new];
+    item.bundleID = bundleID;
+    item.container = container;
+    item.name = bundleID;
+    item.containerDevice = st.st_dev;
+    item.containerInode = st.st_ino;
+    if (!wq_begin_restore_journal(item, src, safety, &err)) {
+        if (errorText) *errorText = err ?: @"Cannot start the restore journal";
+        return nil;
+    }
     for (NSString *part in @[@"Documents", @"Library"]) {
         NSString *srcPart = [src stringByAppendingPathComponent:part];
         NSString *dstPart = [container stringByAppendingPathComponent:part];
@@ -2044,11 +2056,20 @@ NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString
                 NSString *dPart = [container stringByAppendingPathComponent:p2];
                 if ([fm fileExistsAtPath:sPart]) { if (!wq_replace_part(sPart, dPart, &rollbackErr)) break; }
             }
+            NSString *cleanupErr = nil;
+            if (rollbackErr == nil) { (void)wq_finish_restore_journal(&cleanupErr); }
             return @{@"bundleID": bundleID, @"restored": @NO, @"error": err ?: @"Restore failed",
                      @"rolledBack": @(rollbackErr == nil),
                      @"safetyBackup": safety.lastPathComponent ?: @""};
         }
     }
+    NSString *commitErr = nil;
+    if (!wq_mark_restore_journal_committed(&commitErr)) {
+        return @{@"bundleID": bundleID, @"restored": @YES, @"journal": @"commit-failed",
+                 @"error": commitErr ?: @"", @"safetyBackup": safety.lastPathComponent ?: @""};
+    }
+    NSString *doneErr = nil;
+    (void)wq_finish_restore_journal(&doneErr);
     return @{@"bundleID": bundleID, @"restored": @YES,
              @"backup": src.lastPathComponent ?: @"",
              @"safetyBackup": safety.lastPathComponent ?: @""};
