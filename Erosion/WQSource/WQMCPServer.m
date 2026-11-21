@@ -408,6 +408,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
                [deadline timeIntervalSinceNow] > 0 && matches.count < limit) {
             NSString *dir = pending.lastObject;
             [pending removeLastObject];
+            wq_grant(dir);   // worse_query: allow streaming this directory before listing
             NSArray<NSString *> *entries = wq_list(dir, NULL) ?: @[];
             for (NSString *name in entries) {
                 nodes++;
@@ -589,7 +590,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
 - (UIViewController *)controlsViewController {
     UIViewController *vc = [UIViewController new];
-    vc.title = @"MCP Server";
+    vc.title = @"MCP 服务";
     UILabel *label = [UILabel new];
     label.numberOfLines = 0;
     label.textAlignment = NSTextAlignmentCenter;
@@ -598,9 +599,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     void (^refresh)(void) = ^{
         BOOL on = weakSelf.isRunning;
         label.text = [NSString stringWithFormat:
-            @"%@\n\nURL\nhttp://127.0.0.1:%@/mcp\n\nToken\n%@\n\n%@",
-            on ? @"● Running" : @"○ Stopped", WQMCPPort, weakSelf.secret ?: @"",
-            @"Long-press to copy the token. Point your MCP client at the URL with\nAuthorization: Bearer <token>."];
+            @"%@\n\n地址\nhttp://127.0.0.1:%@/mcp\n\n令牌\n%@\n\n%@",
+            on ? @"● 运行中" : @"○ 已停止", WQMCPPort, weakSelf.secret ?: @"",
+            @"长按复制令牌。把 MCP 客户端指向上面地址，加请求头\nAuthorization: Bearer <令牌>."];
     };
     refresh();
     label.translatesAutoresizingMaskIntoConstraints = NO;
@@ -617,14 +618,14 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     [label addGestureRecognizer:lp];
 
     vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-        initWithTitle:(self.isRunning ? @"Stop" : @"Start")
+        initWithTitle:(self.isRunning ? @"停止" : @"启动")
                 style:wq_primary_button_style()
                target:self action:@selector(toggleFromControls)];
     [[NSNotificationCenter defaultCenter] addObserverForName:WQMCPServerChangedNotification object:self
                                                       queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *n) {
         refresh();
         vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
-            initWithTitle:(weakSelf.isRunning ? @"Stop" : @"Start")
+            initWithTitle:(weakSelf.isRunning ? @"停止" : @"启动")
                     style:wq_primary_button_style()
                    target:weakSelf action:@selector(toggleFromControls)];
     }];
