@@ -709,6 +709,66 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     [fb impactOccurred];
 }
 
+- (void)runSelfTest:(UIButton *)sender
+{
+    sender.enabled = NO;
+    [sender setTitle:@"测试中…" forState:UIControlStateNormal];
+    dispatch_async(wq_io(), ^{
+        NSMutableString *r = [NSMutableString string];
+        NSString *err = nil; BOOL ok = NO;
+        NSString *dir = [self.tokenPath stringByDeletingLastPathComponent];
+        NSString *p1 = [dir stringByAppendingPathComponent:@"selftest_a.txt"];
+        NSString *p2 = [dir stringByAppendingPathComponent:@"selftest_b.txt"];
+        NSString *sub = [dir stringByAppendingPathComponent:@"selftest_dir"];
+        NSString *p3 = [sub stringByAppendingPathComponent:@"selftest_b.txt"];
+        NSData *payload = [@"hello" dataUsingEncoding:NSUTF8StringEncoding];
+        @try {
+            ok = wq_create_file(p1, payload, &err);
+            [r appendFormat:@"create %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+            NSData *d = wq_read(p1, 1024, &err);
+            [r appendFormat:@"read   %@  %lu bytes %@\n", d.length ? @"PASS" : @"FAIL", (unsigned long)d.length, err ?: @""]; err = nil;
+            ok = wq_rename(p1, @"selftest_b.txt", &err);
+            [r appendFormat:@"rename %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+            ok = wq_create_dir(sub, &err);
+            [r appendFormat:@"mkdir  %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+            ok = wq_move(p2, sub, &err);
+            [r appendFormat:@"move   %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+            NSData *d2 = wq_read(p3, 64, &err);
+            [r appendFormat:@"read2  %@  %lu bytes %@\n", d2.length ? @"PASS" : @"FAIL", (unsigned long)d2.length, err ?: @""]; err = nil;
+            ok = wq_delete(p3, &err);
+            [r appendFormat:@"delete %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+
+            NSArray<NSString *> *cs = wq_ls_container_paths(nil) ?: @[];
+            NSUInteger listed = 0;
+            for (NSString *c in cs) {
+                if ([c isEqualToString:[dir stringByDeletingLastPathComponent]]) continue;
+                wq_grant(c);
+                if (wq_list(c, NULL)) { listed++; if (listed >= 3) break; }
+            }
+            [r appendFormat:@"跨容器打开 %lu/%lu（共发现 %lu 个容器）\n",
+                (unsigned long)listed, (unsigned long)MIN((NSUInteger)3, cs.count), (unsigned long)cs.count];
+
+            NSString *backupRoot = wq_app_backup_root();
+            NSArray *units = backupRoot ? ([NSFileManager.defaultManager contentsOfDirectoryAtPath:backupRoot error:NULL] ?: @[]) : @[];
+            [r appendFormat:@"备份根 %@（%lu 个 App）\n", backupRoot ?: @"(nil)", (unsigned long)units.count];
+        } @catch (NSException *e) {
+            [r appendFormat:@"\nEXCEPTION %@: %@\n", e.name, e.reason ?: @""];
+        }
+        [r appendFormat:@"\n服务 %@  ·  http://127.0.0.1:%@/mcp", self.isRunning ? @"运行中" : @"已停止", WQMCPPort];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sender.enabled = YES;
+            [sender setTitle:@"自检" forState:UIControlStateNormal];
+            UITextView *tv = self.resultView;
+            if (tv) tv.text = r;
+            else {
+                UIAlertController *a = [UIAlertController alertControllerWithTitle:@"MCP 自检" message:r preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
+                [self.hostVC presentViewController:a animated:YES completion:nil];
+            }
+        });
+    });
+}
+
 - (void)toggleFromControls {
     if (self.isRunning) [self stop]; else [self start];
 }
