@@ -88,6 +88,15 @@ struct ErosionRootView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 6)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 18)
+                    .onEnded { v in
+                        let dx = v.translation.width, dy = v.translation.height
+                        guard abs(dx) > 40, abs(dx) > abs(dy) else { return }
+                        withAnimation(.snappy) { WQErosionTab.shared.move(dx < 0 ? 1 : -1) }
+                    }
+            )
             Group {
                 switch tab.index {
                 case 0: ContentView()
