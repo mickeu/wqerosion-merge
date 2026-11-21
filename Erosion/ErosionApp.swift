@@ -50,22 +50,32 @@ struct ErosionRootView: View {
     @State private var didBootstrapLogs = false
 
     var body: some View {
-        TabView(selection: $currentTab) {
-            ContentView()
-                .tabItem {
-                    Label("主页", systemImage: "house")
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(0..<3, id: \.self) { i in
+                    Button {
+                        currentTab = i
+                    } label: {
+                        Image(systemName: ["house.fill", "wrench.and.screwdriver.fill", "folder.fill"][i])
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(currentTab == i ? Color.accentColor : Color.secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .tag(0)
-            TweaksView()
-                .tabItem {
-                    Label("功能修改", systemImage: "wrench.and.screwdriver")
+            }
+            .background(.ultraThinMaterial)
+            Divider()
+            Group {
+                switch currentTab {
+                case 0: ContentView()
+                case 1: TweaksView()
+                default: FMRootView()
                 }
-                .tag(1)
-            FMRootView()
-                .tabItem {
-                    Label("文件浏览", systemImage: "folder")
-                }
-                .tag(2)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .id(langMgr.refreshID)
         .environment(\.locale, langMgr.effectiveLocale)
