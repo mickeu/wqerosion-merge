@@ -78,13 +78,13 @@ struct ErosionRootView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 6)
-            Group {
-                switch currentTab {
-                case 0: ContentView()
-                case 1: TweaksView()
-                default: FMRootView()
-                }
+            TabView(selection: $currentTab) {
+                ContentView().tag(0)
+                TweaksView().tag(1)
+                FMRootView().tag(2)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .animation(.snappy, value: currentTab)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .id(langMgr.refreshID)
