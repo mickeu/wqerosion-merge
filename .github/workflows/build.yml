@@ -27,10 +27,10 @@ jobs:
           set -e
           xcodebuild \
             -project Erosion.xcodeproj \
-            -target Erosion \
+            -scheme Erosion \
             -configuration Release \
-            -sdk iphoneos \
-            SYMROOT="$PWD/build" \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DD \
             ASSETCATALOG_COMPILER_APPICON_NAME="AppIcon" \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO \
             clean build
@@ -38,7 +38,7 @@ jobs:
       - name: Package IPA
         run: |
           set -e
-          APP=$(find build/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          APP=$(find build/DD/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           echo "app=$APP"
           test -n "$APP"
           rm -rf out && mkdir -p out/Payload
