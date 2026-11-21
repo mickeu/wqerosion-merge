@@ -617,9 +617,15 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     if ([plan.operation hasPrefix:@"app_"]) {
         NSString *appErr = nil;
         NSDictionary *res = nil;
-        if ([plan.operation isEqualToString:@"app_backup"]) res = WQMCPAppBackup(plan.bundleID, &appErr);
-        else if ([plan.operation isEqualToString:@"app_clear"]) res = WQMCPAppClear(plan.bundleID, plan.safetyBackup, &appErr);
-        else res = WQMCPAppRestore(plan.bundleID, plan.backupName, &appErr);
+        // Explicit dispatch: never default to a destructive operation.
+        if ([plan.operation isEqualToString:@"app_backup"])
+            res = WQMCPAppBackup(plan.bundleID, &appErr);
+        else if ([plan.operation isEqualToString:@"app_clear"])
+            res = WQMCPAppClear(plan.bundleID, plan.safetyBackup, &appErr);
+        else if ([plan.operation isEqualToString:@"app_restore"])
+            res = WQMCPAppRestore(plan.bundleID, plan.backupName, &appErr);
+        else
+            return [self textResult:[NSString stringWithFormat:@"Unknown app operation: %@", plan.operation] isError:YES];
         if (!res) return [self textResult:(appErr ?: @"App operation failed") isError:YES];
         return [self textResult:[self jsonString:res] isError:NO];
     }
