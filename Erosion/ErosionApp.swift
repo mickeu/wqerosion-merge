@@ -11,6 +11,12 @@ import SwiftUI
 import Combine
 import UniformTypeIdentifiers
 
+final class WQErosionTab: ObservableObject {
+    static let shared = WQErosionTab()
+    @Published var index = 0
+    func move(_ d: Int) { index = min(2, max(0, index + d)) }
+}
+
 let device = UIDevice.current
 let fm = FileManager.default
 var weOnADebugBuild = false
@@ -46,7 +52,7 @@ func wqErosionBootstrap() {
 struct ErosionRootView: View {
     @StateObject private var mgr = ErosionManager.shared
     @StateObject private var langMgr = LocalizationManager.shared
-    @State private var currentTab = 0
+    @ObservedObject private var tab = WQErosionTab.shared
     @State private var didBootstrapLogs = false
 
     var body: some View {
@@ -54,17 +60,17 @@ struct ErosionRootView: View {
             let bar = HStack(spacing: 6) {
                 ForEach(0..<3, id: \.self) { i in
                     Button {
-                        withAnimation(.snappy) { currentTab = i }
+                        withAnimation(.snappy) { tab.index = i }
                     } label: {
                         Image(systemName: ["house.fill", "wrench.and.screwdriver.fill", "folder.fill"][i])
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(currentTab == i ? Color.accentColor : Color.secondary)
+                            .foregroundStyle(tab.index == i ? Color.accentColor : Color.secondary)
                             .frame(maxWidth: .infinity)
                             .frame(height: 42)
                             .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
-                    .modifier(WQTopTabGlass(selected: currentTab == i))
+                    .modifier(WQTopTabGlass(selected: tab.index == i))
                 }
             }
             .padding(6)
@@ -79,27 +85,13 @@ struct ErosionRootView: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
             Group {
-                switch currentTab {
+                switch tab.index {
                 case 0: ContentView()
                 case 1: TweaksView()
                 default: FMRootView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            // Horizontal swipe between sections (page TabView gets eaten by the
-            // vertical scroll views inside each page).
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 24)
-                    .onEnded { v in
-                        let dx = v.translation.width, dy = v.translation.height
-                        guard abs(dx) > 70, abs(dx) > abs(dy) * 1.6 else { return }
-                        withAnimation(.snappy) {
-                            if dx < 0 { currentTab = min(2, currentTab + 1) }
-                            else { currentTab = max(0, currentTab - 1) }
-                        }
-                    }
-            )
         }
         .id(langMgr.refreshID)
         .environment(\.locale, langMgr.effectiveLocale)
@@ -166,10 +158,31 @@ struct WQTopTabGlass: ViewModifier {
 }
 
 // Objective-C entry point: builds the Erosion UI as a hostable controller.
+final class WQErosionHostingController: UIHostingController<ErosionRootView>,
+                                        UIGestureRecognizerDelegate {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        for dir in [UISwipeGestureRecognizer.Direction.left, .right] {
+            let g = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
+            g.direction = dir
+            g.delegate = self
+            g.cancelsTouchesInView = false
+            view.addGestureRecognizer(g)
+        }
+    }
+    @objc func swiped(_ g: UISwipeGestureRecognizer) {
+        // Same behaviour as the top bar buttons; the tab bar item is a UITabBarController.
+        if g.direction == .left { WQErosionTab.shared.move(1) } else { WQErosionTab.shared.move(-1) }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+}
+
 @_cdecl("WQErosionMakeRootViewController")
 public func WQErosionMakeRootViewController() -> UIViewController {
     wqErosionBootstrap()
-    let host = UIHostingController(rootView: ErosionRootView())
+    let host = WQErosionHostingController(rootView: ErosionRootView())
     host.title = "Erosion"
     return host
 }
