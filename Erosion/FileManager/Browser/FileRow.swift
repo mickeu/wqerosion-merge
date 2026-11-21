@@ -1,0 +1,328 @@
+//
+//  FileRow.swift
+//  AccessiblePlus
+//
+//  Created by lunginspector on 5/20/26.
+//
+
+import SwiftUI
+
+import QuickLook
+import ZIPFoundation
+
+struct FileRow: View {
+    @EnvironmentObject var mgr: ErosionManager
+    @AppStorage("hideDates") var hideDates = false
+    var file: FileItem
+    
+    @State private var conformsText = false
+    @State private var conformsPlist = false
+    @State private var conformsZip = false
+    @State private var symlinkIsDir = true
+    
+    @State private var showInfo = false
+    @State private var showPlistViewer = false
+    @State private var showTextViewer = false
+    @State private var previewURL: URL?
+    
+    private var resolvedFileURL: URL {
+        file.type == .symlink ? file.destURL : file.fileURL
+    }
+    
+    var body: some View {
+        Group {
+            if file.type == .file || (file.type == .symlink && !symlinkIsDir) {
+                Button {
+                    let target = resolvedFileURL
+                    if conformsZip && file.type == .file {
+                        let res = unzipFile(file.fileURL)
+                        if res {
+                            mgr.refreshFiles.toggle()
+                        } else {
+                            Haptic.shared.play(.heavy)
+                        }
+                    } else {
+                        if conformsPlist {
+                            showPlistViewer.toggle()
+                        } else if conformsText {
+                            showTextViewer.toggle()
+                        } else {
+                            previewURL = target
+                        }
+                    }
+                } label: {
+                    HStack(spacing: isSolariumUI() ? 12 : 10) {
+                        Image(systemName: file.type == .symlink ? "arrow.up.right.circle" : "doc")
+                            .frame(width: 20, alignment: .center)
+                            .foregroundStyle(file.hidden ? .secondary : .primary)
+                        
+                        VStack(alignment: .leading) {
+                            Text(file.name)
+                                .foregroundStyle(file.hidden ? .secondary : .primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if !hideDates && !file.modifiedDateStr.isEmpty && file.type == .file {
+                                Text(file.modifiedDateStr)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        if file.type == .file {
+                            Text("\(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Button {
+                            showInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, !hideDates && !file.modifiedDateStr.isEmpty && file.type == .file && !isSolariumUI() ? 1 : 0)
+                }
+            } else {
+                NavigationLink(destination: FileBrowserView(path: file.destURL, shouldGrant: true)) {
+                    HStack(spacing: isSolariumUI() ? 12 : 10) {
+                        Image(systemName: "arrow.up.right.circle")
+                            .frame(width: 20, alignment: .center)
+                            .foregroundStyle(file.hidden ? .secondary : .primary)
+                        
+                        Text(file.name)
+                            .foregroundStyle(file.hidden ? .secondary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        Button {
+                            showInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .foregroundStyle(Color(.label))
+        .onAppear {
+            let target = resolvedFileURL
+            if file.type == .symlink {
+                if !fm.isReadableFile(atPath: target.path) {
+                    _ = wq.grantAccess(path: target.path, requireWrite: false)
+                }
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: target.path, isDirectory: &isDir) {
+                    symlinkIsDir = isDir.boolValue
+                } else {
+                    symlinkIsDir = false
+                }
+            }
+            conformsText = conformsToTextViewer(target)
+            conformsPlist = conformsToPlistViewer(target)
+            if file.uttype.conforms(to: .zip) {
+                conformsZip = true
+            }
+        }
+        .sheet(isPresented: $showInfo) {
+            InfoViewer(file)
+        }
+        .sheet(isPresented: $showPlistViewer) {
+            PlistViewer(resolvedFileURL)
+        }
+        .sheet(isPresented: $showTextViewer) {
+            TextViewer(resolvedFileURL)
+        }
+        .quickLookPreview($previewURL)
+        // MARK: cell actions
+        .contextMenu {
+            if conformsText || conformsPlist {
+                Menu {
+                    Button {
+                        previewURL = resolvedFileURL
+                    } label: {
+                        Label("快速查看", systemImage: "eye")
+                    }
+                    
+                    if conformsPlist {
+                        Button {
+                            showPlistViewer.toggle()
+                        } label: {
+                            Label("Plist 查看器", systemImage: "tablecells")
+                        }
+                    }
+                    
+                    if conformsText {
+                        Button {
+                            showTextViewer.toggle()
+                        } label: {
+                            Label("文本查看器", systemImage: "doc.plaintext")
+                        }
+                    }
+                } label: {
+                    Label("打开方式...", systemImage: "doc.text.magnifyingglass")
+                }
+            } else {
+                Button {
+                    previewURL = resolvedFileURL
+                } label: {
+                    Label("快速查看", systemImage: "eye")
+                }
+            }
+            
+            Divider()
+            
+            Button {
+                showInfo.toggle()
+            } label: {
+                Label("显示简介", systemImage: "info.circle")
+            }
+            
+            if file.type == .file {
+                Button {
+                    Alertinator.shared.prompt(title: L("请输入新的文件名："), placeholder: file.name, completion: { result in
+                        if let name = result {
+                            let res = renameFile(file.fileURL, to: name)
+                            if res {
+                                mgr.refreshFiles.toggle()
+                            } else {
+                                Alertinator.shared.alert(title: L("重命名文件失败！"), body: Errors.checkLogs)
+                            }
+                        }
+                    })
+                } label: {
+                    Label("重命名", systemImage: "pencil")
+                }
+            }
+            
+            if file.type == .file {
+                if conformsZip {
+                    Button {
+                        let res = unzipFile(file.fileURL)
+                        if res {
+                            mgr.refreshFiles.toggle()
+                        } else {
+                            Alertinator.shared.alert(title: L("解压缩文件失败！"), body: Errors.checkLogs)
+                        }
+                    } label: {
+                        Label("解压缩", systemImage: "archivebox")
+                    }
+                } else {
+                    Button {
+                        let res = zipFile(file.fileURL)
+                        if res {
+                            mgr.refreshFiles.toggle()
+                        } else {
+                            Alertinator.shared.alert(title: L("压缩文件失败！"), body: Errors.checkLogs)
+                        }
+                    } label: {
+                        Label("压缩为 ZIP", systemImage: "archivebox")
+                    }
+                }
+            }
+            
+            if file.type == .file {
+                Button {
+                    let res = duplicateFile(file.fileURL)
+                    if res {
+                        mgr.refreshFiles.toggle()
+                    } else {
+                        Alertinator.shared.alert(title: L("创建文件副本失败！"), body: Errors.checkLogs)
+                    }
+                } label: {
+                    Label("创建副本", systemImage: "plus.square.on.square")
+                }
+            }
+            
+            Divider()
+            
+            Button {
+                let res = copyFileToClipboard(file.fileURL)
+                if !res {
+                    Alertinator.shared.alert(title: L("复制文件失败！"), body: Errors.checkLogs)
+                }
+            } label: {
+                Label("复制", systemImage: "doc.on.doc")
+            }
+            
+            Button {
+                if let url = makeTemp(file.fileURL) {
+                    presentShareSheet(with: url)
+                }
+            } label: {
+                Label("分享", systemImage: "square.and.arrow.up")
+            }
+
+            if file.type == .file && AdCustomWatchStore.shared.canAddAsCustomTarget(url: file.fileURL, owner: file.owner) {
+                let isWatched = AdCustomWatchStore.shared.contains(url: file.fileURL)
+                Button {
+                    if isWatched {
+                        AdCustomWatchStore.shared.remove(fullPath: file.fileURL.path)
+                        Haptic.shared.play(.soft)
+                    } else {
+                        let canon = AdCustomWatchStore.canonicalVarPath(file.fileURL.standardizedFileURL.path)
+                        AdCustomWatchStore.shared.addValidatedRule(canonicalPath: canon)
+                        Haptic.shared.notify(.success)
+                        Alertinator.shared.alert(
+                            title: LocalizationManager.isEnglish ? "Added to Ad Blocker" : "已加入广告锁死列表",
+                            body: LocalizationManager.isEnglish
+                                ? "Manage, preview or lock \"\(file.name)\" anytime in Splash Ad Blocker."
+                                : "已收藏文件「\(file.name)」，可在「开屏广告缓存精准锁死」页预览内容或一键锁死。"
+                        )
+                    }
+                } label: {
+                    Label(
+                        isWatched
+                            ? (LocalizationManager.isEnglish ? "Remove from Ad Blocker" : "移出广告锁死列表")
+                            : (LocalizationManager.isEnglish ? "Add to Ad Blocker" : "加入广告锁死列表"),
+                        systemImage: isWatched ? "lock.slash" : "lock.shield"
+                    )
+                }
+            }
+
+            if AdWhitelistStore.shared.canWhitelistPath(url: file.fileURL, owner: file.owner) {
+                let isWhitelisted = AdWhitelistStore.shared.containsExactPath(file.fileURL)
+                Button {
+                    if isWhitelisted {
+                        AdWhitelistStore.shared.removeExactPath(file.fileURL.path)
+                        Haptic.shared.play(.soft)
+                    } else {
+                        let canon = AdCustomWatchStore.canonicalVarPath(file.fileURL.standardizedFileURL.path)
+                        AdWhitelistStore.shared.addPathRule(rawPath: canon)
+                        Haptic.shared.notify(.success)
+                        Alertinator.shared.alert(
+                            title: LocalizationManager.isEnglish ? "Added to Ad Whitelist" : "已加入广告白名单",
+                            body: LocalizationManager.isEnglish
+                                ? "\"\(file.name)\" will be skipped by global Lock All in Splash Ad Blocker."
+                                : "路径「\(file.name)」已加入广告锁定白名单，执行一键全锁时会自动跳过。"
+                        )
+                    }
+                } label: {
+                    Label(
+                        isWhitelisted
+                            ? (LocalizationManager.isEnglish ? "Remove from Ad Whitelist" : "移出广告白名单")
+                            : (LocalizationManager.isEnglish ? "Add to Ad Whitelist" : "加入广告白名单"),
+                        systemImage: isWhitelisted ? "shield.slash" : "checkmark.shield"
+                    )
+                }
+            }
+            
+            Divider()
+            
+            Button(role: .destructive) {
+                do {
+                    try fm.removeItem(at: file.fileURL)
+                    mgr.refreshFiles.toggle()
+                } catch {
+                    print("(fm) failed to delete file: \(error.localizedDescription)")
+                    Alertinator.shared.alert(title: L("删除文件失败！"), body: Errors.checkLogs)
+                }
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+    }
+}

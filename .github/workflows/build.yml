@@ -1,0 +1,48 @@
+name: build-merged-ipa
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Schemes
+        run: xcodebuild -list -project Erosion.xcodeproj || true
+
+      - name: Build (unsigned)
+        run: |
+          set -e
+          xcodebuild \
+            -project Erosion.xcodeproj \
+            -scheme Erosion \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DD \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Package IPA
+        run: |
+          set -e
+          APP=$(find build/DD/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          echo "app=$APP"
+          rm -rf out && mkdir -p out/Payload
+          cp -r "$APP" out/Payload/
+          ( cd out && zip -qry ../Erosion-merged.ipa Payload )
+          ls -la Erosion-merged.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Erosion-merged-ipa
+          path: Erosion-merged.ipa
