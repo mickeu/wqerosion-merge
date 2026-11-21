@@ -51,7 +51,7 @@ struct ErosionRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            let bar = HStack(spacing: 6) {
                 ForEach(0..<3, id: \.self) { i in
                     Button {
                         withAnimation(.snappy) { currentTab = i }
@@ -65,6 +65,14 @@ struct ErosionRootView: View {
                     }
                     .buttonStyle(.plain)
                     .modifier(WQTopTabGlass(selected: currentTab == i))
+                }
+            }
+            .padding(6)
+            Group {
+                if #available(iOS 19.0, *) {
+                    bar.glassEffect(.regular, in: .capsule)
+                } else {
+                    bar.background(.ultraThinMaterial, in: .capsule)
                 }
             }
             .padding(.horizontal, 16)
@@ -130,14 +138,15 @@ struct ErosionRootView: View {
 /// capsule; the selected one is tinted (like the native bottom tab bar).
 struct WQTopTabGlass: ViewModifier {
     let selected: Bool
-    func body(content: Content) -> some View {
-        if #available(iOS 19.0, *) {
-            content.glassEffect(
-                .regular.interactive().tint(selected ? Color.accentColor.opacity(0.22) : Color.clear),
-                in: .capsule
-            )
+    @ViewBuilder func body(content: Content) -> some View {
+        if selected {
+            if #available(iOS 19.0, *) {
+                content.glassEffect(.regular.interactive().tint(Color.accentColor.opacity(0.28)), in: .capsule)
+            } else {
+                content.background(.ultraThinMaterial, in: .capsule)
+            }
         } else {
-            content.background(.ultraThinMaterial, in: .capsule)
+            content
         }
     }
 }
