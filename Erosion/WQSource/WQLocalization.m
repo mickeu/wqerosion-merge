@@ -40,7 +40,9 @@ BOOL WQIsVerbatim(NSString *text)
 NSString *WQLocalized(NSString *key)
 {
     if (!key.length || WQIsVerbatim(key)) return key;
-    return NSLocalizedString(key, nil);
+    // WQ Files' strings live in a dedicated table so they don't collide with
+    // the host app's own Localizable.strings (the merged Erosion app).
+    return NSLocalizedStringFromTable(key, @"WQFiles", nil);
 }
 
 NSString *WQLocalizedNullable(NSString *text)
