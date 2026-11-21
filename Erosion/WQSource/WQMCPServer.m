@@ -679,6 +679,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         [row.leadingAnchor constraintEqualToAnchor:tv.leadingAnchor],
         [row.trailingAnchor constraintEqualToAnchor:tv.trailingAnchor],
         [row.heightAnchor constraintEqualToConstant:44],
+        [row.bottomAnchor constraintEqualToAnchor:vc.view.safeAreaLayoutGuide.bottomAnchor constant:-12],
     ]];
 
     __weak typeof(self) weakSelf = self;
