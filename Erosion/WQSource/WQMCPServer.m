@@ -11,6 +11,7 @@
 
 #import "WQMCPServer.h"
 #import "WQAccess.h"
+#import "WQLaunchServices.h"
 #import "WQUI.h"
 #import <Security/Security.h>
 #import <sys/socket.h>
@@ -393,8 +394,24 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             [self.searches removeObjectForKey:cursor];
             if (!state) return;
         } else {
+            // Container roots aren't listable directly (sandbox); enumerate the
+            // real per-app containers via LaunchServices, like the WQ Files UI.
+            NSArray<NSString *> *containerRoots = @[
+                @"/var/mobile/Containers/Data/Application",
+                @"/var/mobile/Containers/Shared/AppGroup",
+                @"/var/mobile/Containers/Data/PluginKitPlugin",
+                @"/var/mobile/Containers/Data/InternalDaemon",
+            ];
+            NSMutableArray<NSString *> *roots = [NSMutableArray array];
+            if ([containerRoots containsObject:path]) {
+                NSArray<NSString *> *real = wq_ls_container_paths(nil) ?: @[];
+                if (real.count) [roots addObjectsFromArray:real];
+                else [roots addObject:path];
+            } else {
+                [roots addObject:path];
+            }
             state = [@{
-                @"pending": [NSMutableArray arrayWithObject:path],
+                @"pending": roots,
                 @"query": query.lowercaseString,
                 @"nodes": @0,
                 @"matches": [NSMutableArray array],
