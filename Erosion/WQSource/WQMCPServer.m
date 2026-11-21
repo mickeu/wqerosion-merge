@@ -765,7 +765,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"MCP 服务";
+    self.title = WQLocalized(@"MCP Server");
 
     UITextView *tv = [UITextView new];
     tv.editable = NO;
