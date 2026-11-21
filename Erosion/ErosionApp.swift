@@ -51,23 +51,32 @@ struct ErosionRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
+            let bar = HStack(spacing: 6) {
                 ForEach(0..<3, id: \.self) { i in
                     Button {
-                        currentTab = i
+                        withAnimation(.snappy) { currentTab = i }
                     } label: {
                         Image(systemName: ["house.fill", "wrench.and.screwdriver.fill", "folder.fill"][i])
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(currentTab == i ? Color.accentColor : Color.secondary)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .contentShape(Rectangle())
+                            .frame(height: 42)
+                            .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .background(.ultraThinMaterial)
-            Divider()
+            .padding(6)
+            Group {
+                if #available(iOS 19.0, *) {
+                    bar.glassEffect(.regular, in: .capsule)
+                } else {
+                    bar.background(.ultraThinMaterial, in: .capsule)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
             Group {
                 switch currentTab {
                 case 0: ContentView()
