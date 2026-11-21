@@ -160,15 +160,27 @@ struct WQTopTabGlass: ViewModifier {
 // Objective-C entry point: builds the Erosion UI as a hostable controller.
 final class WQErosionHostingController: UIHostingController<ErosionRootView>,
                                         UIGestureRecognizerDelegate {
-    override func viewDidLoad() {
-        super.viewDidLoad()
+    private var swipeRecognizers: [UISwipeGestureRecognizer] = []
+
+    // Window-level: a recognizer on the hosting view is swallowed by the
+    // SwiftUI buttons and scroll views inside the pages.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard let win = view.window, swipeRecognizers.isEmpty else { return }
         for dir in [UISwipeGestureRecognizer.Direction.left, .right] {
             let g = UISwipeGestureRecognizer(target: self, action: #selector(swiped(_:)))
             g.direction = dir
             g.delegate = self
             g.cancelsTouchesInView = false
-            view.addGestureRecognizer(g)
+            win.addGestureRecognizer(g)
+            swipeRecognizers.append(g)
         }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        swipeRecognizers.forEach { $0.view?.removeGestureRecognizer($0) }
+        swipeRecognizers.removeAll()
     }
     @objc func swiped(_ g: UISwipeGestureRecognizer) {
         // Same behaviour as the top bar buttons; the tab bar item is a UITabBarController.
