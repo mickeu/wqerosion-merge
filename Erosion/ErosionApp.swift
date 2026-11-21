@@ -24,7 +24,11 @@ var pipe = Pipe()
 var sema = DispatchSemaphore(value: 0)
 
 // Was ErosionApp.init(). Call once, before hosting ErosionRootView.
+private var wqErosionBootstrapped = false
+
 func wqErosionBootstrap() {
+    if wqErosionBootstrapped { return }
+    wqErosionBootstrapped = true
     UserDefaults.standard.register(defaults: [
         "mgWriteAtomically": true,
         "maxInode": 15000000

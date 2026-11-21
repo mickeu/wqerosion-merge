@@ -2036,7 +2036,16 @@ NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString
         NSString *dstPart = [container stringByAppendingPathComponent:part];
         if (![fm fileExistsAtPath:srcPart]) continue;
         if (!wq_replace_part(srcPart, dstPart, &err)) {
+            // Roll both parts back from the safety backup so the app is never
+            // left half-restored.
+            NSString *rollbackErr = nil;
+            for (NSString *p2 in @[@"Documents", @"Library"]) {
+                NSString *sPart = [safety stringByAppendingPathComponent:p2];
+                NSString *dPart = [container stringByAppendingPathComponent:p2];
+                if ([fm fileExistsAtPath:sPart]) { if (!wq_replace_part(sPart, dPart, &rollbackErr)) break; }
+            }
             return @{@"bundleID": bundleID, @"restored": @NO, @"error": err ?: @"Restore failed",
+                     @"rolledBack": @(rollbackErr == nil),
                      @"safetyBackup": safety.lastPathComponent ?: @""};
         }
     }

@@ -231,8 +231,11 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         }
         if (resp) {
             [self reply:fd code:200 objectData:resp];
+        } else {
+            // A JSON-RPC notification (e.g. notifications/initialized) still
+            // needs an HTTP response; an empty 202 body is the accepted form.
+            [self reply:fd code:202 objectData:[NSData data]];
         }
-        // Notifications (no id) produce no response.
         close(fd);
     }
 }
@@ -243,7 +246,10 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 }
 
 - (void)reply:(int)fd code:(int)code objectData:(NSData *)body {
-    NSString *status = code == 200 ? @"OK" : code == 401 ? @"Unauthorized" : @"Error";
+    NSString *status = code == 200 ? @"OK"
+        : code == 202 ? @"Accepted"
+        : code == 401 ? @"Unauthorized"
+        : @"Error";
     NSMutableString *head = [NSMutableString stringWithFormat:
         @"HTTP/1.1 %d %@\r\nContent-Type: application/json\r\nContent-Length: %lu\r\nConnection: close\r\n",
         code, status, (unsigned long)body.length];
@@ -404,6 +410,12 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             [self.searches removeObjectForKey:cursor];
             if (!state) return;
         } else {
+            // Drop cursors that already expired (they'd only grow the dictionary).
+            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+            for (NSString *k in self.searches.allKeys) {
+                NSNumber *exp = self.searches[k][@"expires"];
+                if (!exp || exp.doubleValue < now) [self.searches removeObjectForKey:k];
+            }
             // Container roots aren't listable directly (sandbox); enumerate the
             // real per-app containers via LaunchServices, like the WQ Files UI.
             NSArray<NSString *> *containerRoots = @[
@@ -440,9 +452,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             for (NSString *name in entries) {
                 nodes++;
                 NSString *full = [dir stringByAppendingPathComponent:name];
-                BOOL isDir = NO;
-                BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:full isDirectory:&isDir];
-                if (!exists) continue;
+                struct stat st;
+                if (!wq_stat(full, &st) || S_ISLNK(st.st_mode)) continue;   // no symlinks followed
+                BOOL isDir = S_ISDIR(st.st_mode);
                 if ([name.lowercaseString containsString:state[@"query"]]) {
                     [matches addObject:@{@"path": full, @"isDirectory": @(isDir)}];
                     if (matches.count >= limit) break;
@@ -544,7 +556,13 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         return [self textResult:@"Unknown operation" isError:YES];
     }
 
-    dispatch_async(self.stateQueue, ^{ self.plans[plan.token] = plan; });
+    dispatch_async(self.stateQueue, ^{
+        NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+        for (NSString *k in self.plans.allKeys) {
+            if (self.plans[k].expires < now) [self.plans removeObjectForKey:k];
+        }
+        self.plans[plan.token] = plan;
+    });
     return [self textResult:[self jsonString:@{
         @"token": plan.token, @"operation": op, @"path": path,
         @"exists": @(exists), @"size": @(size),
@@ -689,10 +707,11 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             weakSelf.isRunning ? @"● 运行中" : @"○ 已停止", WQMCPPort, weakSelf.secret ?: @""];
     };
     refresh();
+    __weak UIViewController *weakVC = vc;
     [[NSNotificationCenter defaultCenter] addObserverForName:WQMCPServerChangedNotification object:self
                                                       queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *n) {
         refresh();
-        vc.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        weakVC.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
             initWithTitle:(weakSelf.isRunning ? @"停止" : @"启动")
                     style:wq_primary_button_style()
                    target:weakSelf action:@selector(toggleFromControls)];
@@ -723,7 +742,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         NSString *dir = [self.tokenPath stringByDeletingLastPathComponent];
         NSString *p1 = [dir stringByAppendingPathComponent:@"selftest_a.txt"];
         NSString *p2 = [dir stringByAppendingPathComponent:@"selftest_b.txt"];
-        NSString *sub = [dir stringByAppendingPathComponent:@"selftest_dir"];
+        NSString *sub = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selftest_%@", NSUUID.UUID.UUIDString]];
         NSString *p3 = [sub stringByAppendingPathComponent:@"selftest_b.txt"];
         NSData *payload = [@"hello" dataUsingEncoding:NSUTF8StringEncoding];
         @try {
@@ -741,6 +760,9 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             [r appendFormat:@"read2  %@  %lu bytes %@\n", d2.length ? @"PASS" : @"FAIL", (unsigned long)d2.length, err ?: @""]; err = nil;
             ok = wq_delete(p3, &err);
             [r appendFormat:@"delete %@  %@\n", ok ? @"PASS" : @"FAIL", err ?: @""]; err = nil;
+            // tidy: remove the temp dir (tree delete, then dir itself)
+            if (wq_list(sub, NULL)) wq_delete_tree(sub, nil, nil, NULL, NULL, &err);
+            err = nil;
 
             NSArray<NSString *> *cs = wq_ls_container_paths(nil) ?: @[];
             NSUInteger listed = 0;
