@@ -72,6 +72,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 @property (nonatomic, weak) WQMCPServer *server;
 @property (nonatomic, strong) UITextView *tv;
 @property (nonatomic, strong) UIButton *testButton;
+@property (nonatomic, strong) UITextField *bundleField;
 @end
 
 @implementation WQMCPServer
@@ -822,6 +823,27 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     [test setTitle:@"自检" forState:UIControlStateNormal];
     [test addTarget:self action:@selector(runTest) forControlEvents:UIControlEventTouchUpInside];
     self.testButton = test;
+
+    UITextField *bundleField = [UITextField new];
+    bundleField.placeholder = @"bundle id，例如 com.tencent.mqq";
+    bundleField.text = @"com.tencent.mqq";
+    bundleField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    bundleField.autocorrectionType = UITextAutocorrectionTypeNo;
+    bundleField.borderStyle = UITextBorderStyleRoundedRect;
+    bundleField.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular];
+    bundleField.translatesAutoresizingMaskIntoConstraints = NO;
+    self.bundleField = bundleField;
+    [self.view addSubview:bundleField];
+
+    UIButton *wipe = [UIButton buttonWithType:UIButtonTypeSystem];
+    [wipe setTitle:@"清数据（保留登录）" forState:UIControlStateNormal];
+    [wipe addTarget:self action:@selector(wipeKeepingLogin) forControlEvents:UIControlEventTouchUpInside];
+    wipe.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    wipe.backgroundColor = UIColor.systemRedColor;
+    [wipe setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    wipe.layer.cornerRadius = 12;
+    wipe.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:wipe];
     for (UIButton *b in @[copy, test]) {
         b.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
         b.backgroundColor = UIColor.tertiarySystemFillColor;
@@ -835,7 +857,15 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     [self.view addSubview:row];
 
     [NSLayoutConstraint activateConstraints:@[
-        [tv.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],
+        [bundleField.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        [bundleField.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [bundleField.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [bundleField.heightAnchor constraintEqualToConstant:36],
+        [wipe.topAnchor constraintEqualToAnchor:bundleField.bottomAnchor constant:8],
+        [wipe.leadingAnchor constraintEqualToAnchor:bundleField.leadingAnchor],
+        [wipe.trailingAnchor constraintEqualToAnchor:bundleField.trailingAnchor],
+        [wipe.heightAnchor constraintEqualToConstant:42],
+        [tv.topAnchor constraintEqualToAnchor:wipe.bottomAnchor constant:10],
         [tv.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
         [tv.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
         [row.topAnchor constraintEqualToAnchor:tv.bottomAnchor constant:12],
@@ -883,6 +913,27 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     UIPasteboard.generalPasteboard.string = self.server.secret ?: @"";
     UIImpactFeedbackGenerator *fb = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [fb impactOccurred];
+}
+
+// One tap: wipe the app's data but keep Library/Preferences (login state).
+- (void)wipeKeepingLogin
+{
+    NSString *bundle = self.bundleField.text.length ? self.bundleField.text : @"com.tencent.mqq";
+    UIAlertController *confirm = [UIAlertController
+        alertControllerWithTitle:@"确认清理"
+                         message:[NSString stringWithFormat:@"将清空 %@ 的 Documents、Library（除 Preferences）和 tmp，登录态保留。会先自动做完整备份。", bundle]
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"清空" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) {
+        self.tv.text = @"清理中…";
+        dispatch_async(wq_io(), ^{   // engine mutation queue
+            NSString *err = nil;
+            NSDictionary *r = WQMCPAppClearKeeping(bundle, YES, @[@"Library/Preferences"], &err);
+            NSString *msg = r ? [NSString stringWithFormat:@"%@\n", r] : [NSString stringWithFormat:@"失败：%@", err ?: @""];
+            dispatch_async(dispatch_get_main_queue(), ^{ self.tv.text = msg; });
+        });
+    }]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 - (void)runTest
