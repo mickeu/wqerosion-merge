@@ -614,6 +614,16 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             return [self textResult:@"Target changed since plan; create a new plan and ask for confirmation again" isError:YES];
         }
     }
+    // Mutations and app operations run on the engine's serial I/O queue, the
+    // same queue the UI uses, so two commits (or a commit and the UI) can never
+    // interleave on one file.
+    __block id result = nil;
+    dispatch_sync(wq_io(), ^{ result = [self executePlan:plan]; });
+    return result;
+}
+
+- (id)executePlan:(WQMCPPlan *)plan
+{
     if ([plan.operation hasPrefix:@"app_"]) {
         NSString *appErr = nil;
         NSDictionary *res = nil;
@@ -706,7 +716,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 // Runs every tool path in-process and hands back a PASS/FAIL report on main.
 - (void)runSelfTestWithCompletion:(void (^)(NSString *report))completion
 {
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    dispatch_async(wq_io(), ^{   // engine I/O queue: same contract as every other mutation
         NSMutableString *r = [NSMutableString string];
         NSString *err = nil; BOOL ok = NO;
         NSString *dir = [self.tokenPath stringByDeletingLastPathComponent];
