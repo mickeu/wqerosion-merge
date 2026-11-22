@@ -4,10 +4,16 @@
 
 | 上游 | 仓库 | 基线 commit | 版本 | 同步日期 |
 |---|---|---|---|---|
-| WQ Files | https://github.com/kolbicz/WQFiles | `a0cdeb1a91debb66862d0499028be201028d041f` | 0.9.19 (113) | 2026-11-20 |
+| WQ Files | https://github.com/kolbicz/WQFiles | `a8a4d06cbf2651de1cd7bd9f5f8e38f67b025890` | 0.9.20 | 2026-11-22 |
 | Erosion-CN | https://github.com/Kianuni/Erosion-CN | `8ef12aa53bd82869bebc6cf4d22eef7bb15ac65f` | 1.0.6 (31) | 2026-11-19 |
 
 许可证：两者上游均为 GPL-3.0（Erosion-CN 是 jailbreakdotparty/Erosion 的简体中文加固分支）。
+
+## 0.9.20 同步记录（2026-11-22）
+
+上游新增：Apps Manager `.adbk` 备份导入、删除/导入时提示「文件被占用」、SQLite 组（`-wal`/`-shm`）整体保留。
+我们的补丁按 `diff` 重放：`main.m` 的 import/设置页/根 VC 四处 + `WQApps.m` 尾部 MCP 块，全部 re-apply 成功；14 个语言表由新版 `Localizable.strings` 重新生成后追加 MCP 两键（zh 1145 / en 1143）。
+新增依赖：`WQAppsSupport.h` 多了若干 `wq_sqlite_family_*` 等 API（上游自带，无需适配）。
 
 ## 我们的改动（同步时必须保留）
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Report whether the two upstreams moved past our baseline (see docs/UPSTREAM.md).
-WQ_BASE=a0cdeb1a91debb66862d0499028be201028d041f
+WQ_BASE=a8a4d06cbf2651de1cd7bd9f5f8e38f67b025890
 ER_BASE=8ef12aa53bd82869bebc6cf4d22eef7bb15ac65f
 WQ=$(git ls-remote https://github.com/kolbicz/WQFiles HEAD 2>/dev/null | cut -f1)
 ER=$(git ls-remote https://github.com/Kianuni/Erosion-CN HEAD 2>/dev/null | cut -f1)
