@@ -1955,7 +1955,11 @@ NSString *wq_recover_interrupted_restore(void)
 static NSString *wq_mcp_container(NSString *bundleID, struct stat *outStat)
 {
     if (!WQAppsSupportBundleIDValid(bundleID)) return nil;
+    // Never let an app operation target WQ Files itself: clearing or restoring
+    // our own Documents/Library would destroy the MCP token and the backups.
+    NSString *home = [NSHomeDirectory() stringByResolvingSymlinksInPath];
     for (NSString *c in wq_ls_container_paths(nil) ?: @[]) {
+        if ([[c stringByResolvingSymlinksInPath] isEqualToString:home]) continue;
         if (![wq_container_label(c) isEqualToString:bundleID]) continue;
         struct stat st;
         if (!(wq_stat(c, &st) && S_ISDIR(st.st_mode))) continue;
