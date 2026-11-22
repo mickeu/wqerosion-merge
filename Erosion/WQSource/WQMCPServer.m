@@ -43,6 +43,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 @property (nonatomic, copy, nullable) NSString *bundleID;
 @property (nonatomic, copy, nullable) NSString *backupName;
 @property (nonatomic, assign) BOOL safetyBackup;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *keep;
 @property (nonatomic, strong, nullable) NSData *data;
 @property (nonatomic, strong, nullable) NSDictionary<NSString *, NSNumber *> *identity;
 @property (nonatomic, assign) NSTimeInterval expires;
@@ -377,6 +378,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
               @"bundleID": str(@"app_*: bundle id of the target app (e.g. com.tencent.xin).", @""),
               @"backup": str(@"app_restore: backup folder name (optional; newest when omitted).", @""),
               @"safetyBackup": @{@"type": @"boolean", @"description": @"app_clear: make a safety backup first (default true)."},
+              @"keep": @{@"type": @"array", @"items": @{@"type": @"string"}, @"description": @"app_clear: container-relative paths to preserve, e.g. [\"Library/Preferences\"] to keep login state."},
               @"newName": str(@"rename: new base name.", @""),
               @"destDir": str(@"move: destination directory.", @""),
               @"dataBase64": str(@"write: file contents, base64.", @"")},
@@ -575,6 +577,12 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         plan.bundleID = [self requiredString:args key:@"bundleID"];
         plan.backupName = [args[@"backup"] isKindOfClass:NSString.class] ? args[@"backup"] : nil;
         plan.safetyBackup = args[@"safetyBackup"] ? [args[@"safetyBackup"] boolValue] : YES;
+        NSArray *keep = [args[@"keep"] isKindOfClass:NSArray.class] ? args[@"keep"] : nil;
+        if (keep.count) {
+            NSMutableArray<NSString *> *k = [NSMutableArray array];
+            for (id v in keep) if ([v isKindOfClass:NSString.class] && [v length]) [k addObject:v];
+            plan.keep = k;
+        }
         if ([op isEqualToString:@"app_clear"]) {
             irreversible = @"Deletes the app's Documents, Library and tmp (like a fresh install). Safety backup first; logins and offline data are lost.";
         } else if ([op isEqualToString:@"app_restore"]) {
@@ -640,7 +648,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         else if ([plan.operation isEqualToString:@"app_backup"])
             res = WQMCPAppBackup(plan.bundleID, &appErr);
         else if ([plan.operation isEqualToString:@"app_clear"])
-            res = WQMCPAppClear(plan.bundleID, plan.safetyBackup, &appErr);
+            res = WQMCPAppClearKeeping(plan.bundleID, plan.safetyBackup, plan.keep, &appErr);
         else if ([plan.operation isEqualToString:@"app_restore"])
             res = WQMCPAppRestore(plan.bundleID, plan.backupName, &appErr);
         else

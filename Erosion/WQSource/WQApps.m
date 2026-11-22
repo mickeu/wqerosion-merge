@@ -2004,6 +2004,13 @@ NSDictionary *WQMCPAppBackup(NSString *bundleID, NSString **errorText)
 
 NSDictionary *WQMCPAppClear(NSString *bundleID, BOOL safetyBackup, NSString **errorText)
 {
+    return WQMCPAppClearKeeping(bundleID, safetyBackup, nil, errorText);
+}
+
+// Clear Documents/Library/tmp but skip any relative path in `keep` (and anything
+// inside it). Used to wipe an app's data without touching its login state.
+NSDictionary *WQMCPAppClearKeeping(NSString *bundleID, BOOL safetyBackup, NSArray<NSString *> *keep, NSString **errorText)
+{
     struct stat st;
     NSString *container = wq_mcp_container(bundleID, &st);
     if (!container) { if (errorText) *errorText = @"No installed app container for this bundle id"; return nil; }
@@ -2013,9 +2020,28 @@ NSDictionary *WQMCPAppClear(NSString *bundleID, BOOL safetyBackup, NSString **er
         if (!safety) { if (errorText) *errorText = err ?: @"Safety backup failed; nothing cleared"; return nil; }
     }
     unsigned long long freed = 0;
+    NSFileManager *fm = NSFileManager.defaultManager;
     for (NSString *part in @[@"Documents", @"Library", @"tmp"]) {
         NSString *p = [container stringByAppendingPathComponent:part];
-        if (![NSFileManager.defaultManager fileExistsAtPath:p]) continue;
+        if (![fm fileExistsAtPath:p]) continue;
+        if (keep.count) {
+            // Clear child by child so the kept subtrees survive.
+            for (NSString *child in ([fm contentsOfDirectoryAtPath:p error:NULL] ?: @[])) {
+                NSString *rel = [part stringByAppendingPathComponent:child];
+                BOOL skip = NO;
+                for (NSString *k in keep) {
+                    if ([rel isEqualToString:k] || [rel hasPrefix:[k stringByAppendingString:@"/"]]) { skip = YES; break; }
+                }
+                if (skip) continue;
+                NSString *cp = [p stringByAppendingPathComponent:child];
+                if (!wq_purge_and_verify(cp, &freed, &err)) {
+                    if (errorText) *errorText = err ?: @"Clear failed";
+                    return @{@"bundleID": bundleID, @"cleared": @NO, @"freedBytes": @(freed),
+                             @"kept": keep, @"error": err ?: @""};
+                }
+            }
+            continue;
+        }
         if (!wq_purge_and_verify(p, &freed, &err)) {
             if (errorText) *errorText = err ?: @"Clear failed";
             return @{@"bundleID": bundleID, @"cleared": @NO, @"freedBytes": @(freed),
@@ -2023,7 +2049,8 @@ NSDictionary *WQMCPAppClear(NSString *bundleID, BOOL safetyBackup, NSString **er
         }
     }
     return @{@"bundleID": bundleID, @"cleared": @YES, @"freedBytes": @(freed),
-             @"safetyBackup": safety.lastPathComponent ?: (id)NSNull.null};
+             @"safetyBackup": safety.lastPathComponent ?: (id)NSNull.null,
+             @"kept": keep ?: @[]};
 }
 
 NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString **errorText)
