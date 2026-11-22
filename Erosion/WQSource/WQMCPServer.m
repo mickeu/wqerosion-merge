@@ -372,7 +372,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
               @"required": @[@"path"]}},
         @{@"name": @"plan", @"description": @"Stage a mutation WITHOUT executing it. Show the exact returned targets, sizes and irreversible items to the user; obtain explicit confirmation before commit. Close target app manually. Expires after 120 seconds; one use.",
           @"inputSchema": @{@"type": @"object", @"properties": @{
-              @"operation": str(@"write | delete | rename | mkdir | move | app_backup | app_clear | app_restore.", @""),
+              @"operation": str(@"write | delete | rename | mkdir | move | app_backup | app_clear | app_restore | cache_clear.", @""),
               @"path": str(@"Target absolute path (not needed for app_* operations).", @""),
               @"bundleID": str(@"app_*: bundle id of the target app (e.g. com.tencent.xin).", @""),
               @"backup": str(@"app_restore: backup folder name (optional; newest when omitted).", @""),
@@ -529,7 +529,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
 - (id)toolPlan:(NSDictionary *)args {
     NSString *op = [self requiredString:args key:@"operation"];
-    BOOL isApp = [op hasPrefix:@"app_"];
+    BOOL isApp = [op hasPrefix:@"app_"] || [op isEqualToString:@"cache_clear"];
     NSString *path = isApp ? nil : [self requiredString:args key:@"path"];
     if (!isApp && (wq_is_protected_folder(path) || wq_is_backup_storage_path(path))) {
         return [self textResult:@"Protected/invalid mutation path (WQFiles sandbox, backup stores and broad ancestors are protected)" isError:YES];
@@ -564,6 +564,13 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
     } else if ([op isEqualToString:@"move"]) {
         plan.destDir = [self requiredString:args key:@"destDir"];
         irreversible = @"Moves across folders; no safety copy.";
+    } else if ([op isEqualToString:@"cache_clear"]) {
+        plan.bundleID = [self requiredString:args key:@"bundleID"];
+        NSString *mErr = nil;
+        NSDictionary *m = WQMCPAppCacheClear(plan.bundleID, YES, &mErr);   // measure only
+        if (!m) return [self textResult:(mErr ?: @"Cannot measure caches") isError:YES];
+        size = [m[@"bytes"] unsignedLongLongValue];
+        irreversible = @"Deletes Library/Caches and tmp only. Documents, other Library content and logins are untouched; apps rebuild caches.";
     } else if ([op isEqualToString:@"app_backup"] || [op isEqualToString:@"app_clear"] || [op isEqualToString:@"app_restore"]) {
         plan.bundleID = [self requiredString:args key:@"bundleID"];
         plan.backupName = [args[@"backup"] isKindOfClass:NSString.class] ? args[@"backup"] : nil;
@@ -624,11 +631,13 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
 
 - (id)executePlan:(WQMCPPlan *)plan
 {
-    if ([plan.operation hasPrefix:@"app_"]) {
+    if ([plan.operation hasPrefix:@"app_"] || [plan.operation isEqualToString:@"cache_clear"]) {
         NSString *appErr = nil;
         NSDictionary *res = nil;
         // Explicit dispatch: never default to a destructive operation.
-        if ([plan.operation isEqualToString:@"app_backup"])
+        if ([plan.operation isEqualToString:@"cache_clear"])
+            res = WQMCPAppCacheClear(plan.bundleID, NO, &appErr);
+        else if ([plan.operation isEqualToString:@"app_backup"])
             res = WQMCPAppBackup(plan.bundleID, &appErr);
         else if ([plan.operation isEqualToString:@"app_clear"])
             res = WQMCPAppClear(plan.bundleID, plan.safetyBackup, &appErr);

@@ -2078,3 +2078,36 @@ NSDictionary *WQMCPAppRestore(NSString *bundleID, NSString *backupName, NSString
              @"backup": src.lastPathComponent ?: @"",
              @"safetyBackup": safety.lastPathComponent ?: @""};
 }
+
+NSDictionary *WQMCPAppCacheClear(NSString *bundleID, BOOL dryRun, NSString **errorText)
+{
+    struct stat st;
+    NSString *container = wq_mcp_container(bundleID, &st);
+    if (!container) { if (errorText) *errorText = @"No installed app container for this bundle id"; return nil; }
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray *targets = [NSMutableArray array];
+    unsigned long long total = 0;
+    for (NSString *part in @[@"Library/Caches", @"tmp"]) {
+        NSString *dir = [container stringByAppendingPathComponent:part];
+        if (![fm fileExistsAtPath:dir]) continue;
+        unsigned long long bytes = 0;
+        (void)wq_measure_tree(dir, nil, &bytes);
+        if (dryRun) {
+            [targets addObject:@{@"path": dir, @"bytes": @(bytes)}];
+            total += bytes;
+            continue;
+        }
+        unsigned long long freed = 0;
+        if (!wq_purge_contents(dir, &freed)) {
+            NSString *why = [NSString stringWithFormat:@"Could not clear %@", part];
+            if (errorText) *errorText = why;
+            return @{@"bundleID": bundleID, @"cleared": @NO, @"freedBytes": @(total + freed), @"error": why};
+        }
+        total += freed;
+    }
+    if (dryRun) {
+        return @{@"bundleID": bundleID, @"dryRun": @YES, @"bytes": @(total), @"targets": targets,
+                 @"note": @"Only Library/Caches and tmp. Documents, other Library content and logins are untouched."};
+    }
+    return @{@"bundleID": bundleID, @"cleared": @YES, @"freedBytes": @(total)};
+}

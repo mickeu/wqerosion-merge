@@ -17,3 +17,6 @@ NSString *_Nullable wq_recover_interrupted_restore(void);
 NSDictionary *_Nullable WQMCPAppBackup(NSString *bundleID, NSString *_Nullable *_Nullable errorText);
 NSDictionary *_Nullable WQMCPAppClear(NSString *bundleID, BOOL safetyBackup, NSString *_Nullable *_Nullable errorText);
 NSDictionary *_Nullable WQMCPAppRestore(NSString *bundleID, NSString *_Nullable backupName, NSString *_Nullable *_Nullable errorText);
+// Clears only Library/Caches and tmp (never Documents, Library elsewhere, or
+// logins). dryRun reports the size without deleting anything.
+NSDictionary *_Nullable WQMCPAppCacheClear(NSString *bundleID, BOOL dryRun, NSString *_Nullable *_Nullable errorText);
