@@ -594,7 +594,7 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
         self.plans[plan.token] = plan;
     });
     return [self textResult:[self jsonString:@{
-        @"token": plan.token, @"operation": op, @"path": path,
+        @"token": plan.token, @"operation": op, @"path": path ?: NSNull.null,
         @"exists": @(exists), @"size": @(size),
         @"irreversible": irreversible,
         @"expiresIn": @((NSInteger)kWQMCPPlanTTL),
@@ -762,6 +762,16 @@ static const NSTimeInterval kWQMCPPlanTTL = 120.0;
             }
             [r appendFormat:@"跨容器打开 %lu/%lu（共发现 %lu 个容器）\n",
                 (unsigned long)listed, (unsigned long)MIN((NSUInteger)3, cs.count), (unsigned long)cs.count];
+
+            // Plan an app-level operation: its target has no path, which used to
+            // throw when the result dictionary was built.
+            @try {
+                id planRes = [self toolPlan:@{@"operation": @"cache_clear", @"bundleID": @"com.apple.mobilesafari"}];
+                NSString *txt = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:planRes options:0 error:NULL] encoding:NSUTF8StringEncoding];
+                [r appendFormat:@"plan(app) %@\n", [txt containsString:@"token"] ? @"PASS" : @"FAIL"];
+            } @catch (NSException *e) {
+                [r appendFormat:@"plan(app) FAIL  %@\n", e.reason ?: @""];
+            }
 
             NSString *backupRoot = wq_app_backup_root();
             NSArray *units = backupRoot ? ([NSFileManager.defaultManager contentsOfDirectoryAtPath:backupRoot error:NULL] ?: @[]) : @[];
